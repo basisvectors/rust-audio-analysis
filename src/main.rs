@@ -1,30 +1,26 @@
-use hound::{WavReader};
+use hound::WavReader;
 use serde::Serialize;
 use std::env;
 use std::fs::{self, File};
-use std::path::Path;
 use std::io::BufWriter;
+use std::path::Path;
 
 #[derive(Serialize)]
 struct SilentFiles {
     files: Vec<String>,
+    bad_files: Vec<String>,
 }
 
-// fn is_silent(file_path: &Path, threshold: f64) -> bool {
-//     let mut reader = WavReader::open(file_path).expect("Failed to open WAV file");
-//     reader.samples::<i16>()
-//         .all(|sample| sample.unwrap().abs() as f64 <= threshold)
-// }
-
-fn is_silent(file: &Path, threshold: f32) -> bool {
-    let mut reader = WavReader::open(file).expect("Failed to open WAV file");
-    let samples: Vec<f32> = reader.samples::<i16>()
+fn is_silent(file: &Path, threshold: f32) -> Result<bool, hound::Error> {
+    let mut reader = WavReader::open(file)?;
+    let samples: Vec<f32> = reader
+        .samples::<i16>()
         .map(|s| s.unwrap() as f32 / i16::MAX as f32)
         .collect();
-    
+
     let avg_abs: f32 = samples.iter().map(|&s| s.abs()).sum::<f32>() / samples.len() as f32;
-    
-    avg_abs <= threshold
+
+    Ok(avg_abs <= threshold)
 }
 
 fn main() {
@@ -35,15 +31,23 @@ fn main() {
     }
 
     let dir_path = &args[1];
-    let mut silent_files = SilentFiles { files: vec![] };
+    let threshold = 1e-6 as f32;
+    let mut silent_files = SilentFiles {
+        files: vec![],
+        bad_files: vec![],
+    };
 
     for entry in fs::read_dir(dir_path).expect("Directory not found") {
         let entry = entry.expect("Failed to read entry");
         let path = entry.path();
 
         if path.extension().and_then(|s| s.to_str()) == Some("wav") {
-            if is_silent(&path, 1e-4) {
-                silent_files.files.push(path.to_string_lossy().to_string());
+            match is_silent(&path, threshold) {
+                Ok(true) => silent_files.files.push(path.to_string_lossy().to_string()),
+                Ok(false) => (),
+                Err(_) => silent_files
+                    .bad_files
+                    .push(path.to_string_lossy().to_string()),
             }
         }
     }
